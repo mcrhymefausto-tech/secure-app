@@ -1,0 +1,56 @@
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          config: .semgrep.yml
+
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.txt -f json -o dependency-scan.json
+
+      - uses: gitleaks/gitleaks-action@v2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: "*.json"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: scan
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build -t secure-app:${{ github.sha }} .
+
+      - uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          image-ref: secure-app:${{ github.sha }}
+          format: json
+          output: trivy-report.json
+          exit-code: 1
+
+      - uses: anchore/sbom-action@v0
+        with:
+          image: secure-app:${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom.json
+
+      - run: echo "secure-app:${{ github.sha }}" > image-info.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            trivy-report.json
+            sbom.json
+            image-info.txt
